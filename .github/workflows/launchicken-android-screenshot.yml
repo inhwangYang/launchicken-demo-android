@@ -57,17 +57,22 @@ jobs:
           mkdir -p build/launchicken/screenshots
           APK=$(find . -path '*build/outputs/apk/debug/*.apk' | head -n 1)
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-          PKG=$("$BT/aapt" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
-          ACT=$("$BT/aapt" dump badging "$APK" | sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p")
-          echo "Launchicken capture target: $PKG / $ACT"
+          PKG=$("$BT/aapt" dump badging "$APK" 2>/dev/null | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
           adb install -r "$APK"
+          # Resolve the launcher component from the installed package - more robust
+          # than aapt badging, which fails on manifests referencing framework resources.
+          COMPONENT=$(adb shell cmd package resolve-activity --brief "$PKG" | tail -n 1 | tr -d '\r')
+          case "$COMPONENT" in
+            */*) echo "Launchicken capture target: $COMPONENT";;
+            *) echo "::error::Could not resolve a launcher activity for $PKG."; exit 1;;
+          esac
           SCREENS=$(echo "${LAUNCHICKEN_SCREENS:-}" | jq -r '.[].name' 2>/dev/null || true)
           if [ -z "$SCREENS" ]; then SCREENS="home settings"; fi
           adb shell input keyevent KEYCODE_WAKEUP || true
           adb shell wm dismiss-keyguard || true
           for SCREEN in $SCREENS; do
             adb shell am force-stop "$PKG" || true
-            adb shell am start -n "$PKG/$ACT" --es launchicken_screen "$SCREEN"
+            adb shell am start -n "$COMPONENT" --es launchicken_screen "$SCREEN"
             sleep 8
             if [ -z "$(adb shell pidof "$PKG" | tr -d '\r')" ]; then
               echo "::error::App exited before the '$SCREEN' screenshot (launchicken_screen=$SCREEN)."
