@@ -46,6 +46,40 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Write capture script
+        if: ${{ hashFiles('gradlew') != '' }}
+        run: |
+          cat > .launchicken-capture.sh <<'CAPTURE_EOF'
+          #!/usr/bin/env bash
+          # The emulator action runs each script line in a separate shell, so all
+          # capture logic lives in this file and is invoked as a single command.
+          set -e
+          mkdir -p build/launchicken/screenshots
+          APK=$(find . -path '*build/outputs/apk/debug/*.apk' | head -n 1)
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          PKG=$("$BT/aapt" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+          ACT=$("$BT/aapt" dump badging "$APK" | sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p")
+          echo "Launchicken capture target: $PKG / $ACT"
+          adb install -r "$APK"
+          SCREENS=$(echo "${LAUNCHICKEN_SCREENS:-}" | jq -r '.[].name' 2>/dev/null || true)
+          if [ -z "$SCREENS" ]; then SCREENS="home settings"; fi
+          adb shell input keyevent KEYCODE_WAKEUP || true
+          adb shell wm dismiss-keyguard || true
+          for SCREEN in $SCREENS; do
+            adb shell am force-stop "$PKG" || true
+            adb shell am start -n "$PKG/$ACT" --es launchicken_screen "$SCREEN"
+            sleep 8
+            if [ -z "$(adb shell pidof "$PKG" | tr -d '\r')" ]; then
+              echo "::error::App exited before the '$SCREEN' screenshot (launchicken_screen=$SCREEN)."
+              adb exec-out screencap -p > "build/launchicken/screenshots/launchicken-$SCREEN-failure.png" || true
+              adb logcat -d -t 300 > "build/launchicken/screenshots/launchicken-$SCREEN-logcat.txt" || true
+              exit 1
+            fi
+            adb exec-out screencap -p > "build/launchicken/screenshots/launchicken-$SCREEN.png"
+            echo "captured launchicken-$SCREEN.png"
+          done
+          CAPTURE_EOF
+          chmod +x .launchicken-capture.sh
       - name: Capture screenshots on emulator
         if: ${{ hashFiles('gradlew') != '' }}
         uses: reactivecircus/android-emulator-runner@v2
@@ -57,31 +91,7 @@ jobs:
           profile: pixel_7
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
-          script: |
-            set -e
-            APK=$(find . -path '*build/outputs/apk/debug/*.apk' | head -n 1)
-            BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-            PKG=$("$BT/aapt" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
-            ACT=$("$BT/aapt" dump badging "$APK" | sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p")
-            echo "Launchicken capture target: $PKG / $ACT"
-            adb install -r "$APK"
-            SCREENS=$(echo "${LAUNCHICKEN_SCREENS:-}" | jq -r '.[].name' 2>/dev/null || true)
-            if [ -z "$SCREENS" ]; then SCREENS="home settings"; fi
-            adb shell input keyevent KEYCODE_WAKEUP || true
-            adb shell wm dismiss-keyguard || true
-            for SCREEN in $SCREENS; do
-              adb shell am force-stop "$PKG" || true
-              adb shell am start -n "$PKG/$ACT" --es launchicken_screen "$SCREEN"
-              sleep 8
-              if [ -z "$(adb shell pidof "$PKG" | tr -d '\r')" ]; then
-                echo "::error::App exited before the '$SCREEN' screenshot (launchicken_screen=$SCREEN)."
-                adb exec-out screencap -p > "build/launchicken/screenshots/launchicken-$SCREEN-failure.png" || true
-                adb logcat -d -t 300 > "build/launchicken/screenshots/launchicken-$SCREEN-logcat.txt" || true
-                exit 1
-              fi
-              adb exec-out screencap -p > "build/launchicken/screenshots/launchicken-$SCREEN.png"
-              echo "captured launchicken-$SCREEN.png"
-            done
+          script: bash ./.launchicken-capture.sh
       - name: Upload screenshots
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
