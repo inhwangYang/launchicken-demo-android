@@ -23,9 +23,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 
+/**
+ * Name of the intent extra Launchicken uses to request a specific screen for screenshots.
+ * When present, the app must render that screen directly with seeded demo data and without
+ * requiring any user input, auth, or network/services access.
+ */
+const val LAUNCHICKEN_SCREEN_EXTRA = "launchicken_screen"
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Screenshot mode: the extra is only ever set by Launchicken's CI instrumentation.
+        // Normal app launches never carry this extra, so behavior below is unchanged for users.
+        val screenshotScreen = intent?.getStringExtra(LAUNCHICKEN_SCREEN_EXTRA)
+
         setContent {
             MaterialTheme(
                 colorScheme = lightColorScheme(
@@ -34,9 +46,28 @@ class MainActivity : ComponentActivity() {
                     background = Color(0xFFF2F4F5),
                 )
             ) {
-                HabitlyApp()
+                if (screenshotScreen != null) {
+                    LaunchickenScreenshotHost(screenshotScreen)
+                } else {
+                    HabitlyApp()
+                }
             }
         }
+    }
+}
+
+/**
+ * Renders a single screen directly (bypassing tabs/navigation/dialogs) for screenshot capture.
+ * Falls back to the home screen for unknown screen names so we never show a blank screen.
+ */
+@Composable
+fun LaunchickenScreenshotHost(screen: String) {
+    when (screen) {
+        "home" -> Scaffold { padding -> HomeScreen(Modifier.padding(padding)) }
+        "stats" -> Scaffold { padding -> StatsScreen(Modifier.padding(padding)) }
+        "new-habit" -> NewHabitScreen(onClose = {})
+        "settings" -> Scaffold { padding -> SettingsScreen(Modifier.padding(padding)) }
+        else -> Scaffold { padding -> HomeScreen(Modifier.padding(padding)) }
     }
 }
 
