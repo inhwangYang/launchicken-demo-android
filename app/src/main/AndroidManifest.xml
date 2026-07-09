@@ -3,7 +3,6 @@
 
     <application
         android:label="Habitly"
-        android:icon="@android:drawable/sym_def_app_icon"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:supportsRtl="true">
         <activity
